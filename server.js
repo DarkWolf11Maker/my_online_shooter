@@ -256,6 +256,29 @@ io.on('connection', socket => {
     setTimeout(()=>{if(!match.active)return;pk.active=true;io.to(match.id.toString()).emit('pickupBack',{id:pk.id,type:pk.type,x:pk.x,z:pk.z});},20000);
   });
   socket.on('switchWeapon',({idx})=>{ if(player&&idx>=0&&idx<player.inventory.length){player.weaponIdx=idx;} });
+  socket.on('dropWeapon', data => {
+    if (!player || !match || player.dead) return;
+    const idx = data.idx;
+    const wep = player.inventory[idx];
+    if (!wep || ['fists','knife','grenade'].includes(wep.key)) return;
+    // Create a pickup at the player's current position
+    const newId = 10000 + Date.now() % 100000 + Math.floor(Math.random()*1000);
+    const pk = { id: newId, type: wep.key, x: player.x + (Math.random()-.5)*1.5, z: player.z + (Math.random()-.5)*1.5, active: true };
+    match.pickups.push(pk);
+    // Remove from player inventory
+    player.inventory.splice(idx, 1);
+    if (player.weaponIdx >= player.inventory.length) player.weaponIdx = Math.max(0, player.inventory.length - 1);
+    // Tell all players about the new pickup
+    io.to(match.id.toString()).emit('pickupBack', { id: newId, type: pk.type, x: pk.x, z: pk.z });
+    // Tell the dropping player their updated inventory
+    socket.emit('pickupOK', { id: null, inventory: player.inventory, msg: wep.key.toUpperCase() + ' DROPPED' });
+    // Auto-despawn the dropped pickup after 30s
+    setTimeout(() => {
+      if (!match.active) return;
+      const i = match.pickups.indexOf(pk);
+      if (i !== -1 && pk.active) { match.pickups.splice(i, 1); io.to(match.id.toString()).emit('pickupGone', { id: newId }); }
+    }, 30000);
+  });
   socket.on('buyItem',({itemKey})=>{ if(!player||!match)return; socket.emit('shopResult',{itemKey,...buyItem(match,player,itemKey)}); });
   socket.on('disconnect',()=>{
     if (match&&player){match.players.delete(socket.id);socket.to(match.id.toString()).emit('pLeave',{id:socket.id,name:player.name});console.log(`- ${player.name} left match ${match.id}`);if(match.players.size===0&&match.active){match.active=false;matches.delete(match.id);}}
