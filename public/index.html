@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -91,6 +90,15 @@ input[type=text]::placeholder{color:#2a4a18;}
   font-family:'Oswald',sans-serif;font-size:1rem;letter-spacing:.18em;color:#ffd700;
   text-shadow:0 0 12px #aa8800;pointer-events:none;z-index:60;opacity:0;transition:opacity .3s;}
 #ptost.show{opacity:1;}
+/* Pickup hint */
+#pickup-hint{position:fixed;bottom:140px;left:50%;transform:translateX(-50%);
+  font-family:'Oswald',sans-serif;font-size:.88rem;letter-spacing:.22em;color:#7fff00;
+  text-shadow:0 0 10px #3a8800;pointer-events:none;z-index:60;opacity:0;transition:opacity .25s;
+  background:rgba(0,0,0,.65);border:1px solid rgba(127,255,0,.3);padding:5px 14px;}
+#pickup-hint.show{opacity:1;}
+/* Drop hint */
+#drop-hint{position:fixed;bottom:115px;right:160px;font-family:'Oswald',sans-serif;
+  font-size:.68rem;letter-spacing:.15em;color:#888;pointer-events:none;z-index:60;}
 /* Click-to-play */
 #lock-ov{position:fixed;inset:0;z-index:150;display:flex;flex-direction:column;align-items:center;justify-content:center;
   background:rgba(0,0,0,.55);pointer-events:all;cursor:pointer;}
@@ -155,6 +163,57 @@ input[type=text]::placeholder{color:#2a4a18;}
 #end-screen .gold td:first-child,#end-screen .gold td:nth-child(2){color:#ffd700;}
 /* Armor indicator */
 #armor-bar-wrap{margin-top:2px;}
+
+/* ── SCOPE OVERLAY ─────────────────────────────────────────── */
+#scope-ov{position:fixed;inset:0;pointer-events:none;z-index:70;display:none;}
+#scope-ov.show{display:block;}
+#scope-mask{position:absolute;inset:0;background:#000;}
+#scope-lens{position:absolute;top:50%;left:50%;
+  width:min(88vh,88vw);height:min(88vh,88vw);
+  transform:translate(-50%,-50%);border-radius:50%;
+  background:transparent;box-shadow:0 0 0 999px rgba(0,0,0,.97),inset 0 0 60px rgba(0,0,0,.4);
+  border:3px solid #444;}
+#scope-cross::before,#scope-cross::after{content:'';position:absolute;background:rgba(255,255,255,.8);}
+#scope-cross::before{left:50%;top:5%;bottom:5%;width:1px;transform:translateX(-.5px);}
+#scope-cross::after{top:50%;left:5%;right:5%;height:1px;transform:translateY(-.5px);}
+#scope-cross{position:absolute;inset:0;pointer-events:none;}
+#scope-stadia{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:min(88vh,88vw);height:min(88vh,88vw);}
+#scope-mil{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  border:1px solid rgba(255,255,255,.25);border-radius:50%;
+  width:min(30vh,30vw);height:min(30vh,30vw);}
+#scope-label{position:absolute;bottom:8%;left:50%;transform:translateX(-50%);
+  font-family:'Share Tech Mono',monospace;font-size:.7rem;letter-spacing:.25em;
+  color:rgba(200,255,150,.5);pointer-events:none;}
+
+/* ── ADS STATE ─────────────────────────────────────────────── */
+#ads-bar{position:fixed;bottom:10px;left:50%;transform:translateX(-50%);
+  font-family:'Oswald',sans-serif;font-size:.65rem;letter-spacing:.25em;color:#7fff0055;
+  pointer-events:none;z-index:60;display:none;}
+#ads-bar.show{display:block;}
+
+/* ── MAP VOTE ───────────────────────────────────────────────── */
+#vote-ov{position:fixed;inset:0;background:rgba(0,0,0,.94);z-index:400;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;}
+#vote-ov.off{display:none!important;}
+#vote-title{font-family:'Oswald',sans-serif;font-size:1.6rem;color:#7fff00;
+  letter-spacing:.3em;margin-bottom:.4rem;text-align:center;}
+#vote-sub{font-family:'Share Tech Mono',monospace;font-size:.8rem;color:#3a6020;
+  letter-spacing:.2em;margin-bottom:1.8rem;}
+#vote-cards{display:flex;gap:24px;flex-wrap:wrap;justify-content:center;}
+.vc{padding:1.6rem 2.2rem;border:2px solid #1a3a0a;background:rgba(0,8,0,.85);
+  cursor:pointer;font-family:'Oswald',sans-serif;transition:all .18s;
+  min-width:150px;text-align:center;position:relative;}
+.vc:hover{border-color:#7fff00;background:rgba(5,25,5,.9);transform:translateY(-3px);}
+.vc.voted{border-color:#7fff00;background:rgba(0,50,0,.5);cursor:default;}
+.vc .vc-name{font-size:1.1rem;color:#7fff00;letter-spacing:.15em;}
+.vc .vc-votes{font-size:2.6rem;color:#fff;margin:.4rem 0;}
+.vc .vc-bar{height:4px;background:#7fff00;margin-top:.5rem;transition:width .3s;}
+.vc .vc-pct{font-size:.65rem;color:#3a6020;margin-top:.3rem;}
+#vote-timer-bar{width:320px;height:4px;background:#1a3a0a;margin-top:1.8rem;border-radius:2px;overflow:hidden;}
+#vote-timer-fill{height:100%;background:#7fff00;transition:width 1s linear;}
+#vote-timer-txt{font-family:'Oswald',sans-serif;font-size:.85rem;color:#4a7030;
+  letter-spacing:.25em;margin-top:.4rem;}
 </style>
 </head>
 <body>
@@ -167,9 +226,9 @@ input[type=text]::placeholder{color:#2a4a18;}
   <button class="btn" id="joinBtn">JOIN MATCH</button>
   <div class="info-box">
     <strong>CONTROLS</strong><br>
-    WASD / MOVE &nbsp;·&nbsp; MOUSE / AIM &nbsp;·&nbsp; LMB / SHOOT &amp; ATTACK<br>
+    WASD / MOVE &nbsp;·&nbsp; MOUSE / AIM &nbsp;·&nbsp; LMB / SHOOT &amp; ATTACK &nbsp;·&nbsp; <strong style="color:#88ffcc">RMB / AIM DOWN SIGHTS</strong><br>
     G / GRENADE &nbsp;·&nbsp; Q or SCROLL / SWITCH WEAPON &nbsp;·&nbsp; 1–7 / SELECT SLOT<br>
-    B or TAB / LEADERBOARD &nbsp;·&nbsp; <strong style="color:#ffd700">F / SHOP</strong> &nbsp;·&nbsp; ESC / UNLOCK MOUSE<br><br>
+    <strong style="color:#7fff00">E / PICK UP GUN</strong> &nbsp;·&nbsp; <strong style="color:#ff9900">X / DROP GUN</strong> &nbsp;·&nbsp; TAB / LEADERBOARD &nbsp;·&nbsp; <strong style="color:#ffd700">F / SHOP</strong> &nbsp;·&nbsp; ESC / UNLOCK MOUSE<br><br>
     <strong>ECONOMY</strong> — Earn $150 per kill · $50 per assist<br>
     Open shop (F) to buy Armor, Speed, Grenades, Stimpacks &amp; more<br><br>
     <strong>MAPS</strong> — Forest · City · Warehouse · Desert · Arctic · Rooftop
@@ -252,6 +311,29 @@ input[type=text]::placeholder{color:#2a4a18;}
 <div id="ch"></div>
 <div id="flash"></div>
 <div id="ptost"></div>
+<div id="pickup-hint"></div>
+<div id="drop-hint">[X] DROP</div>
+
+<!-- SCOPE OVERLAY -->
+<div id="scope-ov">
+  <div id="scope-mask"></div>
+  <div id="scope-lens"></div>
+  <div id="scope-cross"></div>
+  <div id="scope-mil"></div>
+  <div id="scope-label">⊕ 10× MAGNIFICATION</div>
+</div>
+
+<!-- ADS INDICATOR -->
+<div id="ads-bar">● ADS</div>
+
+<!-- MAP VOTE OVERLAY -->
+<div id="vote-ov" class="off">
+  <div id="vote-title">🗺 VOTE FOR NEXT MAP</div>
+  <div id="vote-sub">CLICK TO VOTE — MAJORITY WINS</div>
+  <div id="vote-cards"></div>
+  <div id="vote-timer-bar"><div id="vote-timer-fill" style="width:100%"></div></div>
+  <div id="vote-timer-txt">20s</div>
+</div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -298,40 +380,80 @@ window.addEventListener('resize', () => {
 });
 
 // ══════════════════════════════════════════════════════════════════
-// CAMERA SYSTEM (FIXED — smooth third-person orbit)
+// CAMERA SYSTEM — First-Person Shooter
 // ══════════════════════════════════════════════════════════════════
-let camYaw   = 0;          // horizontal orbit angle
-let camPitch = 0.48;       // vertical tilt (radians, 0=horizon)
-const CAM_DIST   = 9.5;
-const CAM_HEIGHT = 1.6;    // camera target height above ground
-const CAM_MIN_PITCH = 0.12;
-const CAM_MAX_PITCH = 1.25;
+let camYaw   = 0;     // horizontal look angle
+let camPitch = 0;     // vertical look angle (-up, +down)
+const CAM_MIN_PITCH = -1.4;   // look almost straight up
+const CAM_MAX_PITCH =  1.4;   // look almost straight down
+const FPS_EYE_H = 1.52;       // eye height above ground
 
-// Desired camera position (lerped to each frame)
-const camTarget = new THREE.Vector3();
+// ADS (Aim Down Sights)
+let isADS = false;
+const FOV_NORMAL = 72;
+const FOV_ADS    = 42;
+const FOV_SNIPER = 14;
+
 const camPos    = new THREE.Vector3();
-
-function calcCamPosition(px, pz, yaw, pitch, dist) {
-  // Camera sits behind-above the player at (yaw, pitch) angles
-  const hDist = dist * Math.cos(pitch);
-  return {
-    x: px + Math.sin(yaw)  * hDist,
-    y: CAM_HEIGHT + Math.sin(pitch) * dist,
-    z: pz + Math.cos(yaw)  * hDist,
-  };
-}
+const camTarget = new THREE.Vector3(); // used only for minimap
 
 function updateCamera(dt) {
-  const { x, y, z } = calcCamPosition(myX, myZ, camYaw, camPitch, CAM_DIST);
-  camPos.lerp(new THREE.Vector3(x, y, z), Math.min(1, dt * 0.018));
+  if (!gameActive) return;
+  // FPS: camera sits at player's eye position
+  const tx = myX, ty = FPS_EYE_H, tz = myZ;
+  camPos.lerp(new THREE.Vector3(tx, ty, tz), Math.min(1, dt * 0.4));
   camera.position.copy(camPos);
-  camTarget.set(myX, CAM_HEIGHT * 0.5, myZ);
-  camera.lookAt(camTarget);
+  // Look direction from yaw + pitch
+  const dx = -Math.sin(camYaw) * Math.cos(camPitch);
+  const dy = -Math.sin(camPitch);
+  const dz = -Math.cos(camYaw) * Math.cos(camPitch);
+  camera.lookAt(camPos.x + dx * 500, camPos.y + dy * 500, camPos.z + dz * 500);
 }
 
-// Aim direction = where camera is pointing INTO the scene from behind player
-// Player faces INTO the scene => aimAngle = camYaw + PI
-function getAimAngle() { return camYaw + Math.PI; }
+// Aim angle = direction camera is looking, projected to XZ plane
+function getAimAngle() {
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  return Math.atan2(dir.x, dir.z);
+}
+
+// Snap camera instantly (on spawn / respawn)
+function snapCamera() {
+  camPos.set(myX, FPS_EYE_H, myZ);
+  camera.position.copy(camPos);
+  const dx = -Math.sin(camYaw), dz = -Math.cos(camYaw);
+  camera.lookAt(myX + dx * 100, FPS_EYE_H, myZ + dz * 100);
+}
+
+// ADS
+function startADS() {
+  if (!isLocked || !gameActive || myDead || isShopOpen) return;
+  isADS = true;
+  const wkey = myInventory[myWepIdx]?.key;
+  if (wkey === 'sniper') {
+    camera.fov = FOV_SNIPER;
+    document.getElementById('scope-ov').classList.add('show');
+    document.getElementById('ch').style.display = 'none';
+  } else {
+    camera.fov = FOV_ADS;
+    document.getElementById('ads-bar').classList.add('show');
+  }
+  camera.updateProjectionMatrix();
+}
+
+function stopADS() {
+  isADS = false;
+  camera.fov = FOV_NORMAL;
+  camera.updateProjectionMatrix();
+  document.getElementById('scope-ov').classList.remove('show');
+  document.getElementById('ads-bar').classList.remove('show');
+  document.getElementById('ch').style.display = '';
+}
+
+// Called in updateCamera replaced above — also need legacy calcCamPosition for respawn compat
+function calcCamPosition(px, pz, yaw, pitch, dist) {
+  return { x: px, y: FPS_EYE_H, z: pz };
+}
 
 // ══════════════════════════════════════════════════════════════════
 // LIGHTING
@@ -678,14 +800,22 @@ document.addEventListener('pointerlockchange', () => {
 
 document.addEventListener('mousemove', e => {
   if (!isLocked || !gameActive || myDead || isShopOpen) return;
-  camYaw   -= e.movementX * 0.0026;
-  camPitch  = Math.max(CAM_MIN_PITCH, Math.min(CAM_MAX_PITCH, camPitch + e.movementY * 0.0026));
+  const sens = isADS ? 0.0012 : 0.003;
+  camYaw   -= e.movementX * sens;
+  camPitch  = Math.max(CAM_MIN_PITCH, Math.min(CAM_MAX_PITCH, camPitch - e.movementY * sens));
 });
 
 document.addEventListener('click', e => {
   if (!gameActive || isShopOpen || myDead || myElim) return;
   if (!isLocked) { renderer.domElement.requestPointerLock(); return; }
   doAttack();
+});
+
+document.addEventListener('mousedown', e => {
+  if (e.button === 2) startADS();
+});
+document.addEventListener('mouseup', e => {
+  if (e.button === 2) stopADS();
 });
 
 // Prevent right-click context
@@ -702,8 +832,10 @@ document.addEventListener('keydown', e => {
   if (e.code==='KeyF') toggleShop();
   if (e.code==='KeyG') throwGrenade();
   if (e.code==='KeyQ') nextWeapon();
-  if (e.code==='Escape') { closeShop(); document.exitPointerLock(); }
-  for(let n=0;n<6;n++) if(e.code===`Digit${n+1}`) selectWeapon(n);
+  if (e.code==='KeyE') { if (nearbyPickup) socket?.emit('pickup', { id: nearbyPickup.id }); }
+  if (e.code==='KeyX') dropWeapon();
+  if (e.code==='Escape') { stopADS(); closeShop(); document.exitPointerLock(); }
+  for(let n=0;n<7;n++) if(e.code===`Digit${n+1}`) selectWeapon(n);
 });
 document.addEventListener('keyup', e => {
   K[e.code] = false;
@@ -717,12 +849,13 @@ document.addEventListener('wheel', e => {
 function nextWeapon() { if(myInventory.length>1) selectWeapon((myWepIdx+1)%myInventory.length); }
 function prevWeapon() { if(myInventory.length>1) selectWeapon((myWepIdx-1+myInventory.length)%myInventory.length); }
 function selectWeapon(idx) {
+  if (idx >= myInventory.length || idx < 0) return;
   if (!myInventory[idx]) return;
+  if (isADS) stopADS();
   myWepIdx = idx;
   if (myChar) setCharWep(myChar, myInventory[idx]?.key||'fists');
   socket?.emit('switchWeapon', { idx });
   updateWBar();
-  // Update crosshair style
   const wkey = myInventory[idx]?.key;
   document.getElementById('ch').className = (wkey==='knife'||wkey==='fists') ? 'knife' : '';
 }
@@ -805,9 +938,7 @@ function hitsColl(x, z, r=.45) {
 
 function processMove(dt) {
   if (!gameActive||myDead) return;
-  // Camera-relative movement
-  // forward direction = player-facing direction = INTO scene
-  // cam is behind at camYaw, so player faces camYaw+PI
+  // FPS movement: forward = where camera faces (projected to XZ)
   const fwdX = -Math.sin(camYaw), fwdZ = -Math.cos(camYaw);
   const rtX  =  Math.cos(camYaw), rtZ  = -Math.sin(camYaw);
   let mx=0,mz=0;
@@ -817,29 +948,22 @@ function processMove(dt) {
   if(K['KeyD']){mx+=rtX; mz+=rtZ;}
   if(mx!==0||mz!==0){
     const len=Math.hypot(mx,mz); mx/=len; mz/=len;
-    myAngle = Math.atan2(mx,mz); // facing direction
     const spd = SPEED_BASE * speedMult * (dt/16);
     const nx=myX+mx*spd, nz=myZ+mz*spd;
     if (!hitsColl(nx,myZ)) myX=nx;
     if (!hitsColl(myX,nz)) myZ=nz;
-    // Walk anim
-    if (myChar) {
-      const t=Date.now()*.008;
-      if(myChar.lL)myChar.lL.rotation.x=Math.sin(t)*.55;
-      if(myChar.lR)myChar.lR.rotation.x=Math.sin(t+Math.PI)*.55;
-    }
-  } else {
-    if(myChar){if(myChar.lL)myChar.lL.rotation.x*=.85;if(myChar.lR)myChar.lR.rotation.x*=.85;}
   }
-  // Auto-fire for guns on hold
-  if(K['Space']||K['MouseLeft'])doAttack();
+  // Auto-fire for guns held
+  if(K['MouseLeft']||K['Space']) doAttack();
 
+  // FPS: own character model always hidden (we ARE the character)
   if (myChar) {
+    myChar.group.visible = false;
     myChar.group.position.set(myX, 0, myZ);
-    // Player model rotates to face aim direction (camYaw+PI)
-    myChar.group.rotation.y = camYaw + Math.PI;
   }
 
+  // Send position + aim direction to server
+  myAngle = camYaw + Math.PI; // facing = opposite of camYaw
   if (Date.now()-lastSent>45) {
     lastSent=Date.now();
     socket?.emit('move',{x:myX,z:myZ,a:myAngle});
@@ -847,11 +971,32 @@ function processMove(dt) {
   checkPickups();
 }
 
+let nearbyPickup = null;
+
 function checkPickups() {
-  if (Date.now()-pickupCD<200) return; pickupCD=Date.now();
-  for (const [id,pk] of pickupMeshes) {
-    if (Math.hypot(myX-pk.x,myZ-pk.z)<2.5) { socket?.emit('pickup',{id}); }
+  if (Date.now()-pickupCD<100) return; pickupCD=Date.now();
+  nearbyPickup = null;
+  for (const [id, pk] of pickupMeshes) {
+    if (Math.hypot(myX-pk.x, myZ-pk.z) < 2.5) {
+      nearbyPickup = { id, type: pk.type };
+      break;
+    }
   }
+  const hint = document.getElementById('pickup-hint');
+  if (nearbyPickup) {
+    const name = WN[nearbyPickup.type] || nearbyPickup.type.toUpperCase();
+    hint.textContent = '[E] PICK UP ' + name;
+    hint.classList.add('show');
+  } else {
+    hint.classList.remove('show');
+  }
+}
+
+function dropWeapon() {
+  if (!gameActive || myDead) return;
+  const wep = myInventory[myWepIdx];
+  if (!wep || wep.key==='fists' || wep.key==='knife' || wep.key==='grenade') return;
+  socket?.emit('dropWeapon', { idx: myWepIdx });
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1103,10 +1248,12 @@ function drawMM(){
     const{px,py}=toMM(op.cx||op.tx,op.cz||op.tz);
     mmX.fillStyle='#ff5555';mmX.beginPath();mmX.arc(px,py,3,0,Math.PI*2);mmX.fill();
   }
-  // self
+  // self + facing arrow
   const{px,py}=toMM(myX,myZ);
   mmX.fillStyle='#ffffff';mmX.beginPath();mmX.arc(px,py,4.5,0,Math.PI*2);mmX.fill();
-  const ax=px-Math.sin(camYaw)*8,ay=py-Math.cos(camYaw)*8;
+  // FPS: facing = camYaw+PI, arrow points where player is looking
+  const faceDir = camYaw + Math.PI;
+  const ax=px+Math.sin(faceDir)*9,ay=py+Math.cos(faceDir)*9;
   mmX.strokeStyle='#7fff00';mmX.lineWidth=2;mmX.beginPath();mmX.moveTo(px,py);mmX.lineTo(ax,ay);mmX.stroke();
   mmX.strokeStyle='#1a3a0a';mmX.lineWidth=2;mmX.strokeRect(1,1,MM-2,MM-2);
 }
@@ -1164,14 +1311,13 @@ function connect(name){
     if(myChar)scene.remove(myChar.group);
     myChar=buildChar(0x44aa22,true);
     myChar.group.position.set(myX,0,myZ);
+    myChar.group.visible = false; // FPS: own model hidden
     scene.add(myChar.group);
     setCharWep(myChar,myInventory[0]?.key||'fists');
 
-    // Snap camera immediately
-    const cp=calcCamPosition(myX,myZ,camYaw,camPitch,CAM_DIST);
-    camPos.set(cp.x,cp.y,cp.z);
-    camera.position.copy(camPos);
-    camera.lookAt(myX,CAM_HEIGHT*.5,myZ);
+    // FPS camera snap
+    camPitch = 0; camYaw = 0;
+    snapCamera();
 
     document.getElementById('hud').classList.remove('off');
     document.getElementById('mapbadge').textContent=data.mapName.toUpperCase();
@@ -1240,9 +1386,10 @@ function connect(name){
     myX=data.x;myZ=data.z;myDead=false;myHp=100;
     myInventory=data.inventory||myInventory;
     myMoney=data.money||myMoney;
-    if(myChar){myChar.group.position.set(myX,0,myZ);myChar.group.visible=true;}
-    const cp=calcCamPosition(myX,myZ,camYaw,camPitch,CAM_DIST);
-    camPos.set(cp.x,cp.y,cp.z);
+    if(myWepIdx>=myInventory.length) myWepIdx=0;
+    if(myChar){myChar.group.position.set(myX,0,myZ);myChar.group.visible=false;}
+    stopADS();
+    snapCamera();
     document.getElementById('dead-screen').classList.add('off');
     document.getElementById('lock-ov').classList.remove('off');
     updateHUD(); updateWBar();
@@ -1268,9 +1415,12 @@ function connect(name){
   });
 
   socket.on('pickupOK',data=>{
-    myInventory=data.inventory;
+    if (data.inventory) myInventory = data.inventory;
+    // Clamp weapon index in case inventory shrunk (e.g. after drop)
+    if (myWepIdx >= myInventory.length) myWepIdx = Math.max(0, myInventory.length-1);
     showPickupToast(data.msg||'PICKED UP');
     updateWBar();
+    selectWeapon(myWepIdx);
   });
   socket.on('pickupGone',data=>removePickupMesh(data.id));
   socket.on('pickupBack',data=>{
@@ -1286,6 +1436,7 @@ function connect(name){
 
   socket.on('matchEnd',data=>{
     gameActive=false;
+    stopADS();
     document.getElementById('hud').classList.add('off');
     closeShop(); openLB(false);
     const sc=document.getElementById('end-screen');
@@ -1299,6 +1450,67 @@ function connect(name){
     });
     document.exitPointerLock();
   });
+
+  // ── MAP VOTE ──
+  let myVote = null;
+  let voteChoices = [];
+  let voteTimerIV = null;
+
+  socket.on('voteStart', data => {
+    voteChoices = data.choices;
+    myVote = null;
+    document.getElementById('vote-ov').classList.remove('off');
+    renderVote(data.choices, {});
+    // Countdown timer
+    let secs = data.seconds;
+    document.getElementById('vote-timer-fill').style.width = '100%';
+    document.getElementById('vote-timer-txt').textContent = secs + 's';
+    clearInterval(voteTimerIV);
+    voteTimerIV = setInterval(() => {
+      secs--;
+      const pct = Math.max(0, (secs / data.seconds) * 100);
+      document.getElementById('vote-timer-fill').style.width = pct + '%';
+      document.getElementById('vote-timer-txt').textContent = Math.max(0, secs) + 's';
+      if (secs <= 0) clearInterval(voteTimerIV);
+    }, 1000);
+  });
+
+  socket.on('voteUpdate', data => {
+    renderVote(voteChoices, data.votes);
+  });
+
+  socket.on('voteEnd', data => {
+    clearInterval(voteTimerIV);
+    document.getElementById('vote-title').textContent = '🗺 NEXT MAP: ' + data.winner.toUpperCase();
+    document.getElementById('vote-sub').textContent = 'LOADING IN 3 SECONDS...';
+    document.getElementById('vote-timer-fill').style.width = '0%';
+    setTimeout(() => location.reload(), 3000);
+  });
+
+  function renderVote(choices, votes) {
+    const total = Object.values(votes).reduce((a,b) => a+b, 0) || 1;
+    const cards = document.getElementById('vote-cards');
+    cards.innerHTML = '';
+    const mapEmoji = { forest:'🌲', city:'🏙', warehouse:'🏭', desert:'🏜', arctic:'❄', rooftop:'🏗' };
+    choices.forEach(map => {
+      const v = votes[map] || 0;
+      const pct = Math.round((v / total) * 100);
+      const card = document.createElement('div');
+      card.className = 'vc' + (myVote === map ? ' voted' : '');
+      card.innerHTML = `
+        <div class="vc-name">${mapEmoji[map]||'🗺'} ${map.toUpperCase()}</div>
+        <div class="vc-votes">${v}</div>
+        <div class="vc-bar" style="width:${pct}%"></div>
+        <div class="vc-pct">${pct}%</div>`;
+      if (!myVote) {
+        card.addEventListener('click', () => {
+          myVote = map;
+          socket?.emit('vote', { map });
+        });
+      }
+      cards.appendChild(card);
+    });
+  }
 
   socket.on('pJoin',data=>addKill(data.name+' JOINED',null,'#7fff00'));
   socket.on('pLeave',data=>{
