@@ -66,10 +66,13 @@ function mkPickups(mapName) {
 let matchCtr = 0;
 const matches = new Map();
 let globalLB = [];
+let nextMapVote = null; // voted map for next match
+const voteData = new Map(); // matchId -> { choices, votes, playerVotes, timer }
 
 function createMatch() {
   const id = ++matchCtr;
-  const mapName = MAPS[(id-1) % MAPS.length];
+  const mapName = nextMapVote || MAPS[(id-1) % MAPS.length];
+  nextMapVote = null;
   const m = { id, mapName, active:true, players:new Map(), bullets:[], rockets:[], bulletId:0, pickups:mkPickups(mapName), startTime:Date.now() };
   matches.set(id, m);
   console.log(`[Match ${id}] Created on ${mapName.toUpperCase()}`);
@@ -210,6 +213,32 @@ function endMatch(id) {
   for (const r of res) { const ex=globalLB.find(g=>g.name===r.name); if (ex){ex.kills+=r.kills;ex.matches++;}else globalLB.push({name:r.name,kills:r.kills,matches:1}); }
   globalLB.sort((a,b)=>b.kills-a.kills); globalLB=globalLB.slice(0,10);
   setTimeout(()=>matches.delete(id),60000);
+  // Start map vote after a short delay
+  setTimeout(() => startVote(id), 2000);
+}
+
+function startVote(matchId) {
+  const shuffled = [...MAPS].sort(() => Math.random() - 0.5);
+  const choices = shuffled.slice(0, 3);
+  const votes = {};
+  choices.forEach(m => votes[m] = 0);
+  const v = { choices, votes, playerVotes: new Map() };
+  voteData.set(matchId, v);
+  io.to(matchId.toString()).emit('voteStart', { choices, seconds: 20 });
+  v.timer = setTimeout(() => endVote(matchId), 20000);
+}
+
+function endVote(matchId) {
+  const v = voteData.get(matchId); if (!v) return;
+  clearTimeout(v.timer);
+  let winner = v.choices[0], maxVotes = -1;
+  for (const [map, count] of Object.entries(v.votes)) {
+    if (count > maxVotes) { maxVotes = count; winner = map; }
+  }
+  voteData.delete(matchId);
+  nextMapVote = winner;
+  io.to(matchId.toString()).emit('voteEnd', { winner, votes: v.votes });
+  console.log(`[Vote] Match ${matchId} → next map: ${winner}`);
 }
 
 io.on('connection', socket => {
@@ -280,6 +309,16 @@ io.on('connection', socket => {
     }, 30000);
   });
   socket.on('buyItem',({itemKey})=>{ if(!player||!match)return; socket.emit('shopResult',{itemKey,...buyItem(match,player,itemKey)}); });
+  socket.on('vote', ({ map }) => {
+    if (!match || !player) return;
+    const v = voteData.get(match.id);
+    if (!v || v.playerVotes.has(socket.id)) return;
+    if (!v.choices.includes(map)) return;
+    v.playerVotes.set(socket.id, map);
+    v.votes[map] = (v.votes[map] || 0) + 1;
+    // Broadcast updated vote counts
+    io.to(match.id.toString()).emit('voteUpdate', { votes: v.votes });
+  });
   socket.on('disconnect',()=>{
     if (match&&player){match.players.delete(socket.id);socket.to(match.id.toString()).emit('pLeave',{id:socket.id,name:player.name});console.log(`- ${player.name} left match ${match.id}`);if(match.players.size===0&&match.active){match.active=false;matches.delete(match.id);}}
   });
