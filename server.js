@@ -12,11 +12,12 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.ht
 
 // ─── CONFIG ──────────────────────────────────────────────────
 const MAX_PLAYERS    = 50;
-const MATCH_DURATION = 600000; // 10 min
+const MATCH_DURATION = 600000; // default
 const TICK_MS        = 50;     // 20 Hz
 const MAPS           = ['forest','city','warehouse','desert','arctic','rooftop'];
 const KILL_REWARD    = 150;
 const ASSIST_REWARD  = 50;
+const HEADSHOT_MULT  = 2;
 
 // ─── WEAPON DEFINITIONS ──────────────────────────────────────
 const WDEF = {
@@ -33,6 +34,13 @@ const WDEF = {
   rocket:      { type:'rocket', damage:100, speed:0.55, maxDist:60, maxAmmo:4,   cdMs:2200,bColor:0xff4400, blastR:6 },
   flamethrower:{ type:'gun',    damage:5,   speed:0.55, maxDist:14, maxAmmo:80,  cdMs:60,  bColor:0xff6600, pellets:4, spread:0.4 },
 };
+
+const EYE_Y = 1.52;
+const HEAD_Y = 1.55;
+const BODY_Y = 0.95;
+
+const BARREL_DAMAGE = 80;
+const BARREL_BLAST_R = 6.0;
 
 // ─── SHOP ────────────────────────────────────────────────────
 const SHOP = {
@@ -69,14 +77,66 @@ let globalLB = [];
 let nextMapVote = null; // voted map for next match
 const voteData = new Map(); // matchId -> { choices, votes, playerVotes, timer }
 
+const MODES = ['ffa','tdm','lms'];
+
+const BARREL_POS = {
+  forest:   [[-22,-6],[22,6],[-10,18],[10,-18],[-30,18],[30,-18],[0,26],[0,-26]],
+  city:     [[-18,-18],[18,18],[-18,18],[18,-18],[0,-26],[0,26],[-26,0],[26,0]],
+  warehouse:[[ -8,-14],[ 8,14],[-14,8],[14,-8],[-18,0],[18,0],[0,-18],[0,18]],
+  desert:   [[-24,0],[24,0],[0,-24],[0,24],[-18,-18],[18,18],[-18,18],[18,-18]],
+  arctic:   [[-20,10],[20,-10],[-10,-20],[10,20],[-26,0],[26,0],[0,-26],[0,26]],
+  rooftop:  [[-18,-8],[18,8],[-8,18],[8,-18],[-26,0],[26,0],[0,-26],[0,26]],
+};
+
+function mkBarrels(mapName) {
+  const pos = BARREL_POS[mapName] || BARREL_POS.forest;
+  let id = 1;
+  return pos.map(p => ({ id: id++, x:p[0], z:p[1], alive:true }));
+}
+
+function randDropPos() {
+  // Keep it roughly inside playable ring
+  for (let t=0;t<80;t++) {
+    const x=(Math.random()-.5)*88, z=(Math.random()-.5)*88;
+    if (Math.hypot(x,z) > 48) continue;
+    if (Math.abs(x)<10 && Math.abs(z)<10) continue;
+    return { x, z };
+  }
+  return { x: 0, z: 32 };
+}
+
+function spawnSupplyDrop(match) {
+  const { x, z } = randDropPos();
+  const id = 50000 + Math.floor(Math.random()*900000) + (Date.now() % 10000);
+  const pk = { id, type:'supply', x, z, active:true };
+  match.pickups.push(pk);
+  io.to(match.id.toString()).emit('pickupBack', { id, type: pk.type, x: pk.x, z: pk.z });
+  io.to(match.id.toString()).emit('supplyDrop', { x: pk.x, z: pk.z });
+}
+
 function createMatch() {
   const id = ++matchCtr;
   const mapName = nextMapVote || MAPS[(id-1) % MAPS.length];
   nextMapVote = null;
-  const m = { id, mapName, active:true, players:new Map(), bullets:[], rockets:[], bulletId:0, pickups:mkPickups(mapName), startTime:Date.now() };
+  const mode = MODES[(id-1) % MODES.length];
+  const startTime = Date.now();
+  const durationMs = (mode === 'ffa') ? 180000 : MATCH_DURATION; // FFA = 3 min timer rush
+  const m = {
+    id, mapName, mode,
+    active:true,
+    players:new Map(),
+    bullets:[], rockets:[], bulletId:0,
+    pickups:mkPickups(mapName),
+    barrels: mkBarrels(mapName),
+    supply: null, // {id,x,z,active}
+    nextSupplyAt: startTime + 120000,
+    zoneR: 52, // LMS only
+    startTime,
+    durationMs,
+  };
   matches.set(id, m);
-  console.log(`[Match ${id}] Created on ${mapName.toUpperCase()}`);
-  setTimeout(() => endMatch(id), MATCH_DURATION);
+  console.log(`[Match ${id}] Created on ${mapName.toUpperCase()} mode=${mode.toUpperCase()}`);
+  setTimeout(() => endMatch(id), durationMs);
   return m;
 }
 
@@ -89,11 +149,23 @@ function getMatch() {
 function mkPlayer(sid, name, match) {
   const a = Math.random()*Math.PI*2, r = 6+Math.random()*20;
   const x = Math.cos(a)*r, z = Math.sin(a)*r;
+  const lives = match.mode === 'lms' ? 1 : 3;
+  let team = null;
+  if (match.mode === 'tdm') {
+    let r=0,b=0;
+    for (const [,p] of match.players) { if (p.team==='r') r++; else if (p.team==='b') b++; }
+    team = r<=b ? 'r' : 'b';
+  }
   return {
     id:sid, name:(name||'').trim().slice(0,20)||`Player${~~(Math.random()*9000+1000)}`,
     x, z, angle:0, spawnX:x, spawnZ:z,
-    hp:100, lives:3, dead:false, invincible:0,
+    hp:100, lives, dead:false, invincible:0,
     kills:0, deaths:0, assists:0, money:200,
+    streak:0,
+    team,
+    streakSpeedEnd: 0,
+    airstrikeReady: false,
+    minigunEnd: 0,
     upgrades:{ armor:false, heavy_armor:false, speed:false, radar:false },
     speedMult:1.0, stimEnd:0, lastDamager:null,
     inventory:[{key:'fists',ammo:Infinity},{key:'knife',ammo:Infinity},{key:'grenade',ammo:2}],
@@ -102,30 +174,62 @@ function mkPlayer(sid, name, match) {
 }
 
 // ─── DAMAGE ──────────────────────────────────────────────────
-function damage(match, victimId, rawDmg, killerId) {
+function damage(match, victimId, rawDmg, killerId, meta={}) {
   const v = match.players.get(victimId);
   if (!v || v.dead || v.invincible > 0) return;
+  if (match.mode === 'tdm' && killerId) {
+    const k = match.players.get(killerId);
+    if (k && v.team && k.team && v.team === k.team) return; // no friendly fire
+  }
   v.lastDamager = killerId;
   let dmg = rawDmg;
+  const headshot = !!meta.headshot;
+  if (headshot) dmg = Math.round(dmg * HEADSHOT_MULT);
   if (v.upgrades.heavy_armor) dmg = Math.round(dmg*0.5);
   else if (v.upgrades.armor)  dmg = Math.round(dmg*0.75);
   v.hp = Math.max(0, v.hp - dmg);
-  io.to(victimId).emit('hit', { hp:v.hp, dmg });
-  if (v.hp <= 0) onKill(match, v, killerId);
+  io.to(victimId).emit('hit', { hp:v.hp, dmg, headshot });
+  // Notify the attacker so the client can show a hit marker
+  if (killerId && killerId !== victimId) {
+    io.to(killerId).emit('hitMarker', { hp:v.hp, headshot });
+  }
+  if (v.hp <= 0) onKill(match, v, killerId, { headshot });
   else io.to(match.id.toString()).emit('pHurt', { id:victimId, hp:v.hp });
 }
 
-function onKill(match, v, killerId) {
+function onKill(match, v, killerId, meta={}) {
   v.dead=true; v.hp=0; v.lives--; v.deaths++;
+  v.streak = 0;
+  v.streakSpeedEnd = 0;
+  v.airstrikeReady = false;
   const k = killerId ? match.players.get(killerId) : null;
   if (k) {
     k.kills++; k.money += KILL_REWARD;
+    k.streak = (k.streak||0) + 1;
     io.to(killerId).emit('earnMoney', { amount:KILL_REWARD, total:k.money, reason:'KILL' });
     if (v.lastDamager && v.lastDamager !== killerId) {
       const ass = match.players.get(v.lastDamager);
       if (ass) { ass.money += ASSIST_REWARD; io.to(v.lastDamager).emit('earnMoney', { amount:ASSIST_REWARD, total:ass.money, reason:'ASSIST' }); }
     }
-    io.to(match.id.toString()).emit('kill', { kn:k.name, vn:v.name, ki:killerId, vi:v.id });
+    io.to(match.id.toString()).emit('kill', { kn:k.name, vn:v.name, ki:killerId, vi:v.id, hs:!!meta.headshot });
+
+    // Killstreak rewards
+    if (k.streak === 3) {
+      k.streakSpeedEnd = Date.now() + 12000;
+      io.to(killerId).emit('streakReward', { type:'speed', ms:12000, streak:k.streak });
+    } else if (k.streak === 5) {
+      k.airstrikeReady = true;
+      io.to(killerId).emit('streakReward', { type:'airstrike', streak:k.streak });
+    } else if (k.streak === 7) {
+      k.minigunEnd = Date.now() + 15000;
+      k.streakMinigun = true;
+      const ex = k.inventory.find(w => w.key === 'minigun');
+      if (ex) ex.ammo = Math.max(ex.ammo||0, 240);
+      else k.inventory.push({ key:'minigun', ammo:240 });
+      k.weaponIdx = Math.min(k.weaponIdx, k.inventory.length-1);
+      io.to(killerId).emit('streakReward', { type:'minigun', ms:15000, streak:k.streak });
+      io.to(killerId).emit('pickupOK', { id:null, inventory:k.inventory, msg:'MINIGUN UNLOCKED (15s)' });
+    }
   }
   io.to(v.id).emit('youDied', { lives:v.lives, money:v.money });
   if (v.lives > 0) {
@@ -166,40 +270,110 @@ setInterval(() => {
   const now = Date.now();
   for (const [,m] of matches) {
     if (!m.active) continue;
+
+    // Supply drops
+    if (now >= m.nextSupplyAt) {
+      m.nextSupplyAt = now + 120000;
+      spawnSupplyDrop(m);
+    }
+
+    // LMS shrinking zone
+    if (m.mode === 'lms') {
+      const shrinkMs = 180000;
+      const t = Math.max(0, Math.min(1, (now - m.startTime) / shrinkMs));
+      m.zoneR = 52 - (52-16) * t;
+    } else {
+      m.zoneR = 52;
+    }
+
     for (const [,p] of m.players) {
       if (p.invincible>0) p.invincible = Math.max(0,p.invincible-TICK_MS);
       if (p.stimEnd>now && !p.dead) p.hp = Math.min(100, p.hp+0.15);
+
+      // LMS zone damage
+      if (m.mode === 'lms' && !p.dead && Math.hypot(p.x,p.z) > m.zoneR) {
+        damage(m, p.id, 1, null);
+      }
+
+      // Killstreak minigun expiry
+      if (p.minigunEnd && now >= p.minigunEnd) {
+        p.minigunEnd = 0;
+        if (p.streakMinigun) {
+          p.streakMinigun = false;
+          const idx = p.inventory.findIndex(w => w.key === 'minigun');
+          if (idx !== -1) p.inventory.splice(idx, 1);
+          if (p.weaponIdx >= p.inventory.length) p.weaponIdx = Math.max(0, p.inventory.length - 1);
+          io.to(p.id).emit('pickupOK', { id:null, inventory:p.inventory, msg:'MINIGUN EXPIRED' });
+        }
+      }
     }
     // Bullets
     for (let i=m.bullets.length-1;i>=0;i--) {
       const b=m.bullets[i];
-      b.x+=b.vx; b.z+=b.vz; b.traveled+=Math.hypot(b.vx,b.vz);
-      if (b.traveled>b.maxDist || Math.abs(b.x)>72 || Math.abs(b.z)>72) { m.bullets.splice(i,1); continue; }
+      // Gravity only for sniper (bullet drop)
+      if (b.wk === 'sniper') b.vy -= 0.0022 * (TICK_MS/50);
+      b.x+=b.vx; b.y+=b.vy; b.z+=b.vz;
+      b.traveled+=Math.hypot(b.vx,b.vz,b.vy);
+      if (b.traveled>b.maxDist || Math.abs(b.x)>72 || Math.abs(b.z)>72 || b.y<0 || b.y>6) { m.bullets.splice(i,1); continue; }
       let hit=false;
+
+      // Explosive barrels
+      for (const br of m.barrels) {
+        if (!br.alive) continue;
+        if ((b.x-br.x)**2 + (b.z-br.z)**2 < 1.0) {
+          br.alive = false;
+          io.to(m.id.toString()).emit('explosion', { x:br.x, z:br.z, big:false });
+          io.to(m.id.toString()).emit('barrelGone', { id: br.id });
+          for (const [pid,p] of m.players) {
+            const d2=Math.hypot(p.x-br.x,p.z-br.z);
+            if (d2 < BARREL_BLAST_R) damage(m,pid,Math.round(BARREL_DAMAGE*(1-d2/BARREL_BLAST_R)), b.owner);
+          }
+          m.bullets.splice(i,1); hit=true;
+          break;
+        }
+      }
+      if (hit) continue;
+
       for (const [pid,p] of m.players) {
         if (pid===b.owner||p.dead||p.invincible>0) continue;
-        if ((b.x-p.x)**2+(b.z-p.z)**2 < 0.9) { damage(m,pid,b.damage,b.owner); m.bullets.splice(i,1); hit=true; break; }
+        const dx=b.x-p.x, dz=b.z-p.z;
+        if (dx*dx+dz*dz < 0.9) {
+          const headshot = b.y > HEAD_Y;
+          damage(m,pid,b.damage,b.owner,{ headshot });
+          m.bullets.splice(i,1); hit=true; break;
+        }
       }
       if (hit) continue;
     }
     // Rockets
     for (let i=m.rockets.length-1;i>=0;i--) {
       const r=m.rockets[i];
-      r.x+=r.vx; r.z+=r.vz; r.traveled+=Math.hypot(r.vx,r.vz);
-      let boom = r.traveled>WDEF.rocket.maxDist || Math.abs(r.x)>72 || Math.abs(r.z)>72;
+      r.vy -= 0.0018 * (TICK_MS/50);
+      r.x+=r.vx; r.y+=r.vy; r.z+=r.vz; r.traveled+=Math.hypot(r.vx,r.vz,r.vy);
+      let boom = r.traveled>WDEF.rocket.maxDist || Math.abs(r.x)>72 || Math.abs(r.z)>72 || r.y<0;
       for (const [pid,p] of m.players) { if (pid!==r.owner&&!p.dead&&(r.x-p.x)**2+(r.z-p.z)**2<1.4) { boom=true; break; } }
       if (boom) {
         io.to(m.id.toString()).emit('explosion', { x:r.x, z:r.z, big:true });
         for (const [pid,p] of m.players) { const d2=Math.hypot(p.x-r.x,p.z-r.z); if (d2<WDEF.rocket.blastR) damage(m,pid,Math.round(WDEF.rocket.damage*(1-d2/WDEF.rocket.blastR)),r.owner); }
+        for (const br of m.barrels) {
+          if (!br.alive) continue;
+          if (Math.hypot(br.x-r.x, br.z-r.z) < BARREL_BLAST_R) {
+            br.alive=false;
+            io.to(m.id.toString()).emit('barrelGone', { id: br.id });
+          }
+        }
         m.rockets.splice(i,1);
       }
     }
-    const T=Math.max(0,Math.floor((m.startTime+MATCH_DURATION-now)/1000));
+    const T=Math.max(0,Math.floor((m.startTime+(m.durationMs||MATCH_DURATION)-now)/1000));
     const LB=[...m.players.values()].sort((a,b)=>b.kills-a.kills).slice(0,10).map(p=>({n:p.name,k:p.kills,d:p.deaths,m:p.money}));
     io.to(m.id.toString()).emit('S', {
-      P:[...m.players.values()].map(p=>({i:p.id,n:p.name,x:+(p.x.toFixed(2)),z:+(p.z.toFixed(2)),a:+(p.angle.toFixed(2)),h:p.hp,l:p.lives,k:p.kills,d:p.dead,w:p.weaponIdx,ar:p.upgrades.heavy_armor?2:p.upgrades.armor?1:0})),
-      B:m.bullets.map(b=>({i:b.id,x:+(b.x.toFixed(2)),z:+(b.z.toFixed(2)),c:b.color})),
-      R:m.rockets.map(r=>({i:r.id,x:+(r.x.toFixed(2)),z:+(r.z.toFixed(2))})),
+      P:[...m.players.values()].map(p=>({i:p.id,n:p.name,x:+(p.x.toFixed(2)),z:+(p.z.toFixed(2)),a:+(p.angle.toFixed(2)),h:p.hp,l:p.lives,k:p.kills,d:p.dead,w:p.weaponIdx,ar:p.upgrades.heavy_armor?2:p.upgrades.armor?1:0,t:p.team,s:p.streak||0,sb:(p.streakSpeedEnd&&now<p.streakSpeedEnd)?1:0,as:!!p.airstrikeReady})),
+      B:m.bullets.map(b=>({i:b.id,x:+(b.x.toFixed(2)),y:+(b.y.toFixed(2)),z:+(b.z.toFixed(2)),c:b.color})),
+      R:m.rockets.map(r=>({i:r.id,x:+(r.x.toFixed(2)),y:+(r.y.toFixed(2)),z:+(r.z.toFixed(2))})),
+      BR:m.barrels.filter(b=>b.alive).map(b=>({id:b.id,x:+(b.x.toFixed(1)),z:+(b.z.toFixed(1))})),
+      MO:m.mode,
+      ZR:+(m.zoneR.toFixed(2)),
       T, LB, PC:m.players.size,
     });
   }
@@ -245,19 +419,51 @@ io.on('connection', socket => {
   let match=null, player=null;
   socket.on('join', ({name}) => {
     match=getMatch(); player=mkPlayer(socket.id,name,match); match.players.set(socket.id,player); socket.join(match.id.toString());
-    socket.emit('joined',{playerId:socket.id,mapName:match.mapName,spawnX:player.x,spawnZ:player.z,pickups:match.pickups,timeLeft:Math.max(0,Math.floor((match.startTime+MATCH_DURATION-Date.now())/1000)),matchId:match.id,inventory:player.inventory,money:player.money,playerCount:match.players.size});
+    socket.emit('joined',{
+      playerId:socket.id,
+      mapName:match.mapName,
+      mode:match.mode,
+      team:player.team,
+      spawnX:player.x,spawnZ:player.z,
+      pickups:match.pickups,
+      barrels:match.barrels,
+      timeLeft:Math.max(0,Math.floor((match.startTime+(match.durationMs||MATCH_DURATION)-Date.now())/1000)),
+      matchId:match.id,
+      inventory:player.inventory,
+      money:player.money,
+      playerCount:match.players.size
+    });
     socket.to(match.id.toString()).emit('pJoin',{id:socket.id,name:player.name});
     console.log(`+ ${player.name} → match ${match.id} [${match.players.size}/${MAX_PLAYERS}] ${match.mapName}`);
   });
-  socket.on('move',data=>{ if(!player||player.dead) return; if(Math.hypot(data.x-player.x,data.z-player.z)>2.5) return; player.x=data.x;player.z=data.z;player.angle=data.a; });
+  socket.on('move',data=>{
+    if(!player||player.dead) return;
+    const now=Date.now();
+    const streakBoost = (player.streakSpeedEnd && now < player.streakSpeedEnd) ? 1.35 : 1.0;
+    const permBoost = player.speedMult || 1.0;
+    const maxStep = 2.5 * permBoost * streakBoost;
+    if(Math.hypot(data.x-player.x,data.z-player.z) > maxStep) return;
+    player.x=data.x;player.z=data.z;player.angle=data.a;
+  });
   socket.on('shoot',data=>{
     if (!player||player.dead||!match) return;
     const wd=WDEF[data.wk]; if (!wd||wd.type==='melee'||wd.type==='throw') return;
     const now=Date.now(); if (now-player.lastShot<(wd.cdMs-30)) return; player.lastShot=now;
     if (wd.type==='rocket') {
-      match.rockets.push({id:++match.bulletId,x:player.x+Math.sin(data.a)*0.9,z:player.z+Math.cos(data.a)*0.9,vx:Math.sin(data.a)*wd.speed,vz:Math.cos(data.a)*wd.speed,owner:socket.id,traveled:0,maxDist:wd.maxDist});
+      const pitch = Number.isFinite(data.p) ? data.p : 0;
+      const ca=Math.cos(data.a), sa=Math.sin(data.a), cp=Math.cos(pitch), sp=Math.sin(pitch);
+      const vx=sa*cp*wd.speed, vz=ca*cp*wd.speed, vy=-sp*wd.speed;
+      match.rockets.push({id:++match.bulletId,x:player.x+sa*0.9,y:EYE_Y,z:player.z+ca*0.9,vx,vy,vz,owner:socket.id,traveled:0,maxDist:wd.maxDist});
     } else {
-      for (let i=0;i<(wd.pellets||1);i++) { const spr=(wd.spread||0.025)*(Math.random()-0.5)*2,ang=data.a+spr; match.bullets.push({id:++match.bulletId,x:player.x+Math.sin(ang)*0.9,z:player.z+Math.cos(ang)*0.9,vx:Math.sin(ang)*wd.speed,vz:Math.cos(ang)*wd.speed,owner:socket.id,damage:wd.damage,color:wd.bColor,traveled:0,maxDist:wd.maxDist}); }
+      const pitch = Number.isFinite(data.p) ? data.p : 0;
+      for (let i=0;i<(wd.pellets||1);i++) {
+        const spr=(wd.spread||0.025)*(Math.random()-0.5)*2;
+        const ang=data.a+spr;
+        const ca=Math.cos(ang), sa=Math.sin(ang);
+        const cp=Math.cos(pitch), sp=Math.sin(pitch);
+        const vx=sa*cp*wd.speed, vz=ca*cp*wd.speed, vy=-sp*wd.speed;
+        match.bullets.push({id:++match.bulletId,x:player.x+sa*0.9,y:EYE_Y,z:player.z+ca*0.9,vx,vy,vz,owner:socket.id,damage:wd.damage,color:wd.bColor,traveled:0,maxDist:wd.maxDist,wk:data.wk});
+      }
     }
   });
   socket.on('melee',()=>{
@@ -271,6 +477,29 @@ io.on('connection', socket => {
     setTimeout(()=>{ if(!match.active)return; io.to(match.id.toString()).emit('explosion',{x:data.x,z:data.z,big:false}); for (const [pid,p] of match.players){const d2=Math.hypot(p.x-data.x,p.z-data.z);if(d2<WDEF.grenade.blastR)damage(match,pid,Math.round(WDEF.grenade.damage*(1-d2/WDEF.grenade.blastR)),socket.id);}},2600);
     io.to(match.id.toString()).emit('grenadeFly',{ox:player.x,oz:player.z,vx:data.vx,vy:data.vy||0.18,vz:data.vz});
   });
+  socket.on('airstrike', data => {
+    if (!player || !match || player.dead) return;
+    if (!player.airstrikeReady) return;
+    const x = +data?.x, z = +data?.z;
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+    if (Math.abs(x) > 70 || Math.abs(z) > 70) return;
+    player.airstrikeReady = false;
+    io.to(match.id.toString()).emit('airstrike', { x, z, by: player.name });
+    const blastR = 7.5;
+    const dmg = 90;
+    for (let i=0;i<7;i++) {
+      setTimeout(() => {
+        if (!match.active) return;
+        const ox = x + (Math.random() - 0.5) * 16;
+        const oz = z + (Math.random() - 0.5) * 16;
+        io.to(match.id.toString()).emit('explosion', { x: ox, z: oz, big:true });
+        for (const [pid,p] of match.players) {
+          const d2=Math.hypot(p.x-ox,p.z-oz);
+          if (d2 < blastR) damage(match, pid, Math.round(dmg*(1-d2/blastR)), player.id);
+        }
+      }, 650 + i*140);
+    }
+  });
   socket.on('pickup',data=>{
     if (!player||!match) return;
     const pk=match.pickups.find(p=>p.id===data.id&&p.active); if (!pk) return;
@@ -282,6 +511,18 @@ io.on('connection', socket => {
     pk.active=false;
     const AMMO={pistol:12,shotgun:8,rifle:30,smg:45,sniper:5,minigun:120,crossbow:8,rocket:4,flamethrower:80};
     let msg='';
+    if (pk.type==='supply') {
+      const rare = ['sniper','rocket','crossbow','minigun'][Math.floor(Math.random()*4)];
+      const ex=player.inventory.find(w=>w.key===rare);
+      if(ex) ex.ammo = Math.min((ex.ammo||0) + AMMO[rare], AMMO[rare]*2);
+      else player.inventory.push({ key: rare, ammo: AMMO[rare] });
+      msg = 'SUPPLY DROP: ' + rare.toUpperCase();
+      socket.emit('pickupOK',{id:pk.id,inventory:player.inventory,msg});
+      io.to(match.id.toString()).emit('pickupGone',{id:pk.id});
+      const idx = match.pickups.indexOf(pk);
+      if (idx !== -1) match.pickups.splice(idx, 1);
+      return;
+    }
     if (pk.type==='ammo'){for(const w of player.inventory)if(AMMO[w.key])w.ammo=Math.min((w.ammo||0)+Math.ceil(AMMO[w.key]*0.6),AMMO[w.key]*2);msg='AMMO CRATE';}
     else{const ex=player.inventory.find(w=>w.key===pk.type);if(ex)ex.ammo=Math.min((ex.ammo||0)+AMMO[pk.type],AMMO[pk.type]*2);else player.inventory.push({key:pk.type,ammo:AMMO[pk.type]});msg=pk.type.toUpperCase()+' PICKED UP';}
     socket.emit('pickupOK',{id:pk.id,inventory:player.inventory,msg});
@@ -330,3 +571,4 @@ io.on('connection', socket => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`\n🎮  Forest Deathmatch Online  →  http://localhost:${PORT}\n`));
+
