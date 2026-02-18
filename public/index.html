@@ -165,26 +165,36 @@ input[type=text]::placeholder{color:#2a4a18;}
 #armor-bar-wrap{margin-top:2px;}
 
 /* ── SCOPE OVERLAY ─────────────────────────────────────────── */
+/* The overlay itself is fully transparent — no background. */
 #scope-ov{position:fixed;inset:0;pointer-events:none;z-index:70;display:none;}
 #scope-ov.show{display:block;}
-#scope-mask{position:absolute;inset:0;background:#000;}
-#scope-lens{position:absolute;top:50%;left:50%;
-  width:min(88vh,88vw);height:min(88vh,88vw);
+/* 
+  The lens IS the viewport. It has transparent background so the
+  WebGL canvas (z-index:0) shows through it.
+  box-shadow spreads a huge black shadow OUTSIDE the circle only
+  (because border-radius:50% clips the shadow to the circle edge),
+  creating the scope vignette without covering the lens area.
+  overflow:hidden on a parent would clip it but we use the spread trick.
+*/
+#scope-lens{
+  position:absolute;top:50%;left:50%;
+  width:min(84vh,84vw);height:min(84vh,84vw);
   transform:translate(-50%,-50%);border-radius:50%;
-  background:transparent;box-shadow:0 0 0 999px rgba(0,0,0,.97),inset 0 0 60px rgba(0,0,0,.4);
-  border:3px solid #444;}
-#scope-cross::before,#scope-cross::after{content:'';position:absolute;background:rgba(255,255,255,.8);}
-#scope-cross::before{left:50%;top:5%;bottom:5%;width:1px;transform:translateX(-.5px);}
-#scope-cross::after{top:50%;left:5%;right:5%;height:1px;transform:translateY(-.5px);}
-#scope-cross{position:absolute;inset:0;pointer-events:none;}
-#scope-stadia{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-  width:min(88vh,88vw);height:min(88vh,88vw);}
-#scope-mil{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
-  border:1px solid rgba(255,255,255,.25);border-radius:50%;
-  width:min(30vh,30vw);height:min(30vh,30vw);}
+  background:transparent;
+  /* Outer black ring — covers everything outside the circle */
+  box-shadow:0 0 0 1000px rgba(0,0,0,.98);
+  /* Slight inner darkening at edges for glass feel */
+  outline: 3px solid #333;
+  overflow:hidden; /* keeps child SVG inside circle */
+}
+/* Reticle drawn with SVG inside the lens */
+#scope-svg{
+  position:absolute;inset:0;width:100%;height:100%;
+  overflow:visible;
+}
 #scope-label{position:absolute;bottom:8%;left:50%;transform:translateX(-50%);
   font-family:'Share Tech Mono',monospace;font-size:.7rem;letter-spacing:.25em;
-  color:rgba(200,255,150,.5);pointer-events:none;}
+  color:rgba(200,255,150,.45);pointer-events:none;white-space:nowrap;}
 
 /* ── ADS STATE ─────────────────────────────────────────────── */
 #ads-bar{position:fixed;bottom:10px;left:50%;transform:translateX(-50%);
@@ -316,11 +326,26 @@ input[type=text]::placeholder{color:#2a4a18;}
 
 <!-- SCOPE OVERLAY -->
 <div id="scope-ov">
-  <div id="scope-mask"></div>
-  <div id="scope-lens"></div>
-  <div id="scope-cross"></div>
-  <div id="scope-mil"></div>
-  <div id="scope-label">⊕ 10× MAGNIFICATION</div>
+  <div id="scope-lens">
+    <!-- SVG reticle renders on top of the transparent lens area (canvas shows below) -->
+    <svg id="scope-svg" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+      <!-- Crosshair lines -->
+      <line x1="50" y1="4"  x2="50" y2="44"  stroke="rgba(255,255,255,0.82)" stroke-width="0.5"/>
+      <line x1="50" y1="56" x2="50" y2="96"  stroke="rgba(255,255,255,0.82)" stroke-width="0.5"/>
+      <line x1="4"  y1="50" x2="44" y2="50"  stroke="rgba(255,255,255,0.82)" stroke-width="0.5"/>
+      <line x1="56" y1="50" x2="96" y2="50"  stroke="rgba(255,255,255,0.82)" stroke-width="0.5"/>
+      <!-- Center dot -->
+      <circle cx="50" cy="50" r="0.8" fill="rgba(255,80,80,0.9)"/>
+      <!-- Mil-dot ring -->
+      <circle cx="50" cy="50" r="18" fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="0.4"/>
+      <!-- Stadia lines on horizontal -->
+      <line x1="26" y1="50" x2="28" y2="50" stroke="rgba(255,255,255,0.55)" stroke-width="0.5"/>
+      <line x1="72" y1="50" x2="74" y2="50" stroke="rgba(255,255,255,0.55)" stroke-width="0.5"/>
+      <line x1="36" y1="50" x2="38" y2="50" stroke="rgba(255,255,255,0.4)"  stroke-width="0.4"/>
+      <line x1="62" y1="50" x2="64" y2="50" stroke="rgba(255,255,255,0.4)"  stroke-width="0.4"/>
+    </svg>
+    <div id="scope-label">⊕ 10× MAGNIFICATION</div>
+  </div>
 </div>
 
 <!-- ADS INDICATOR -->
@@ -832,7 +857,7 @@ document.addEventListener('keydown', e => {
   if (e.code==='KeyF') toggleShop();
   if (e.code==='KeyG') throwGrenade();
   if (e.code==='KeyQ') nextWeapon();
-  if (e.code==='KeyE') { if (nearbyPickup) socket?.emit('pickup', { id: nearbyPickup.id }); }
+  if (e.code==='KeyE') { if (nearbyPickup && myInventory.length < 7) socket?.emit('pickup', { id: nearbyPickup.id }); }
   if (e.code==='KeyX') dropWeapon();
   if (e.code==='Escape') { stopADS(); closeShop(); document.exitPointerLock(); }
   for(let n=0;n<7;n++) if(e.code===`Digit${n+1}`) selectWeapon(n);
@@ -984,8 +1009,15 @@ function checkPickups() {
   }
   const hint = document.getElementById('pickup-hint');
   if (nearbyPickup) {
+    const isFull = myInventory.length >= 7;
     const name = WN[nearbyPickup.type] || nearbyPickup.type.toUpperCase();
-    hint.textContent = '[E] PICK UP ' + name;
+    if (isFull) {
+      hint.textContent = '⚠ SLOTS FULL — DROP A GUN FIRST [X]';
+      hint.style.color = '#ff6633';
+    } else {
+      hint.textContent = '[E] PICK UP ' + name;
+      hint.style.color = '#7fff00';
+    }
     hint.classList.add('show');
   } else {
     hint.classList.remove('show');
@@ -1420,7 +1452,7 @@ function connect(name){
     if (myWepIdx >= myInventory.length) myWepIdx = Math.max(0, myInventory.length-1);
     showPickupToast(data.msg||'PICKED UP');
     updateWBar();
-    selectWeapon(myWepIdx);
+    if (data.id !== null) selectWeapon(myWepIdx); // only re-select if something actually changed
   });
   socket.on('pickupGone',data=>removePickupMesh(data.id));
   socket.on('pickupBack',data=>{
