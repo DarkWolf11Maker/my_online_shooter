@@ -275,6 +275,10 @@ io.on('connection', socket => {
     if (!player||!match) return;
     const pk=match.pickups.find(p=>p.id===data.id&&p.active); if (!pk) return;
     if (Math.hypot(player.x-pk.x,player.z-pk.z)>3.5) return;
+    if (player.inventory.length >= 7) {
+      socket.emit('pickupOK',{id:null,inventory:player.inventory,msg:'SLOTS FULL!'});
+      return;
+    }
     pk.active=false;
     const AMMO={pistol:12,shotgun:8,rifle:30,smg:45,sniper:5,minigun:120,crossbow:8,rocket:4,flamethrower:80};
     let msg='';
